@@ -40,7 +40,7 @@ int aMax = 9500;
 // #define driverB_ADDRESS 0b01// Pin MS1 connected to VCC and MS2 connected to GND.
 
 //Stallguard values for each driver(0-255), higher number -> higher sensitivity.
-#define STALLA_VALUE 4
+#define STALLA_VALUE 6
 // #define STALLB_VALUE 23
 
 #define RA_SENSE 0.11f // Sense resistor value, match to your driverA
