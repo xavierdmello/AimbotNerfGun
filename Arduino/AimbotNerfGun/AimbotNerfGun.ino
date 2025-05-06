@@ -1,217 +1,208 @@
 /**
- * Author Teemu Mäntykallio and Kushagra Keshari
- * Initializes the library and runs the stepper motor with AccelStepper for testing sensorless homing.
+ * Aimbot Nerf Gun – single‑axis firmware  ❚ 2025‑05‑06
+ * ---------------------------------------------------
+ * Implements:
+ *   1. Sensor‑less homing (motorAHome)
+ *   2. Coordinate system zeroing after homing
+ *   3. Serial command interface (newline‑terminated)
+ *   4. Soft‑limit enforcement and run‑time tuning of max travel, speed & accel
+ *   5. Debug prints of position before & after every commanded move
+ *
+ *  Supported commands (type one per line in Serial Monitor):
+ *    home                 → run homing routine
+ *    mov <N>              → move to absolute step N (0 ≤ N ≤ max)
+ *    setmax <N>           → set positive soft‑limit in steps
+ *    setspeed <N>         → set max speed (steps/s)
+ *    setaccel <N>         → set acceleration (steps/s²)
+ *    sett <N>             → set StallGuard SGTHRS (0‑255)
+ *    pos?                 → report current position
+ *    t?                   → report current SGTHRS value
+ *
+ *  Example session:
+ *    home
+ *    sett 6
+ *    setmax 9500
+ *    setspeed 4000
+ *    setaccel 12000
+ *    mov 3000
+ *    pos?
  */
 
 #include <TMCStepper.h>
-#define LED_BUILTIN       2
-#define RX1             19
-#define TX1             21
-
-#define EN_PIN           23 // Enable
-#define STEP_PIN         18 // Step
-#define STALL_PIN_X      17 // Connected to DIAG pin on the TMC2209
-#define DIR_PIN          5 // Direction
-
-
-// #define ENB_PIN           8 // Enable
-// #define DIRB_PIN          7 // Direction
-// #define STEPB_PIN         6 // Step
-// #define STALLB_PIN_X      9
-//#define CS_PIN           42 // Chip select
-//#define SW_MOSI          66 // Software Master Out Slave In (MOSI)
-//#define SW_MISO          44 // Software Master In Slave Out (MISO)
-//#define SW_SCK           64 // Software Slave Clock (SCK)
-//#define SW_RX            63 // TMC2208/TMC2224 SoftwareSerial receive pin
-//#define SW_TX            40 // TMC2208/TMC2224 SoftwareSerial transmit pin
-
-int aMin = 50;
-int aMax = 9500;
-// int bMin = 50;
-// int bMax = 8000;
-
-#define SERIAL_PORT Serial1 // TMC2209 HardwareSerial port
-
-//The numbers after 'b' are determined by the state of pins MS2 and MS1 pins of
-//TMC2209 respectively. 1->VCC 2->GND
-//Both the driver's UART pins are connected to the same UART pins of the microcontroller.
-//The distinct addresses are used to indentify each and control the parameters individually.
-#define driverA_ADDRESS 0b00 //Pins MS1 and MS2 connected to GND.
-// #define driverB_ADDRESS 0b01// Pin MS1 connected to VCC and MS2 connected to GND.
-
-//Stallguard values for each driver(0-255), higher number -> higher sensitivity.
-#define STALLA_VALUE 6
-// #define STALLB_VALUE 23
-
-#define RA_SENSE 0.11f // Sense resistor value, match to your driverA
-// #define RB_SENSE 0.11f
-
-
-TMC2209Stepper driverA(&SERIAL_PORT, RA_SENSE, driverA_ADDRESS);
-// TMC2209Stepper driverB(&SERIAL_PORT, RB_SENSE, driverB_ADDRESS);
-
-constexpr uint32_t steps_per_round = 200*(60/16);//Claculated for the belt and pulley system.
-
 #include <AccelStepper.h>
-AccelStepper stepperA = AccelStepper(stepperA.DRIVER, STEP_PIN, DIR_PIN);
-// AccelStepper stepperB = AccelStepper(stepperB.DRIVER, STEPB_PIN, DIRB_PIN);
 
+//---------------------------------------------
+// Pinout & driver parameters
+//---------------------------------------------
+#define LED_BUILTIN       2
+#define RX1               19
+#define TX1               21
 
-bool startup = true; // set false after homing
-bool stalled_A = false;
-bool stalled_B = false;
+#define EN_PIN            23   // Enable
+#define STEP_PIN          18   // Step
+#define DIR_PIN           5    // Direction
+#define STALL_PIN_X       17   // DIAG/STALL output from TMC2209
 
-void stallInterruptX(){ // flag set for motor A when motor stalls
-stalled_A = true;
-}
+#define SERIAL_PORT Serial1     // UART for TMC2209
+#define USB Serial              // USB‑CDC for user commands / debug
 
-// void stallInterruptB(){ // flag set for motor B when motor stalls
-// stalled_B = true;
-// }
+constexpr float  R_SENSE         = 0.11f;   // Ω
+constexpr uint8_t DRIVER_ADDR    = 0b00;    // MS1=0, MS2=0
 
-// void motorBHome()
-// {
-//   stepperB.move(-100*steps_per_round);
-//   while(1)
-//     {
-//       stepperB.run();
+//---------------------------------------------
+// Globals
+//---------------------------------------------
+TMC2209Stepper driverA(&SERIAL_PORT, R_SENSE, DRIVER_ADDR);
+AccelStepper   stepperA(AccelStepper::DRIVER, STEP_PIN, DIR_PIN);
 
-//       if(stalled_B){
-//         stepperB.setCurrentPosition(0);
-//         break; 
-//       }
-      
-//     }
+volatile bool stalled_A = false;
+long          softMax   = 1250;      // positive limit in steps
+uint8_t       sgthrs    = 9;          // StallGuard threshold (0‑255)
+long    prevSpeed;
+long    prevAccel;
 
-//     digitalWrite(LED_BUILTIN, HIGH);
+//---------------------------------------------
+// ISR – stall flag
+//---------------------------------------------
+void IRAM_ATTR stallInterruptA() { stalled_A = true; }
 
-//     delay(250);
-
-//     digitalWrite(LED_BUILTIN, LOW);
-
-//     stepperB.setMaxSpeed(10*steps_per_round);
-//     stepperB.setAcceleration(50*steps_per_round); // 2000mm/s^2
-//     stepperB.moveTo(1250);
-
-//     while(stepperB.distanceToGo())
-//     stepperB.run();
-// }
-
+//---------------------------------------------
+// Homing routine (blocking)
+//---------------------------------------------
 void motorAHome() {
-  // 1) StealthChop for StallGuard4
-  driverA.en_spreadCycle(false);
+  USB.println("[HOMING] start");
+  driverA.en_spreadCycle(false);         // StealthChop for StallGuard
+  driverA.microsteps(16);
 
-  // 2) Configure your homing speed & accel
-  constexpr float homingSpeed = 1.25f * steps_per_round;  // e.g. 100 mm/s
-  constexpr float homingAccel = 10.0f * steps_per_round;  // e.g. 2000 mm/s²
-  stepperA.setMaxSpeed(homingSpeed);
-  stepperA.setAcceleration(homingAccel);
+  const long HOMING_SPEED     = 1000;    // steps/s
+  const long HOMING_ACCEL     = 5000;    // steps/s²
+  const long HOMING_TRAVEL_ST = -100000; // toward switch
 
-  // 3) Move toward the switch
-  stepperA.move(-100 * steps_per_round);
-  while (!stalled_A) {
+  // cache run‑mode settings
+  prevSpeed = stepperA.maxSpeed();
+  prevAccel = stepperA.acceleration();
+
+  // set homing params
+  stepperA.setMaxSpeed(HOMING_SPEED);
+  stepperA.setAcceleration(HOMING_ACCEL);
+
+  // start homing move
+  stalled_A = false;
+  stepperA.move(HOMING_TRAVEL_ST);
+  while (!stalled_A) stepperA.run();     // wait for stall
+
+  // brick‑wall stop
+  stepperA.disableOutputs();             // cut pulses instantly
+  stepperA.setCurrentPosition(0);        // temporarily zero at switch
+  driverA.en_spreadCycle(true);          // restore SpreadCycle
+  stepperA.enableOutputs();              // re‑energize motor
+
+  // --- NEW: back off 50 steps ---
+  stepperA.moveTo(50);                   // +50 steps away from switch
+  while (stepperA.distanceToGo())        // wait for retract
     stepperA.run();
-  }
-  stalled_A = false;  // clear flag
 
-  // 4) Smoothly move back to “0” at homing speed
-  stepperA.moveTo(0);
-  while (stepperA.distanceToGo() != 0) {
-    stepperA.run();
-  }
+  stepperA.setCurrentPosition(0);        // now zero at back‑off point
 
-  // 5) Zero the axis now that we're at the home position
-  stepperA.setCurrentPosition(0);
+  // restore run‑mode params
+  stepperA.setMaxSpeed(prevSpeed);
+  stepperA.setAcceleration(prevAccel);
 
-  // 6) Optional LED blink to indicate done
-  digitalWrite(LED_BUILTIN, HIGH);
-  delay(250);
-  digitalWrite(LED_BUILTIN, LOW);
-
-  // 7) Restore SpreadCycle (if you want it for normal moves)
-  driverA.en_spreadCycle(true);
+  USB.println("[HOMING] done – backed off 50 steps, position = 0");
 }
 
+//---------------------------------------------
+// Command parsing helpers
+//---------------------------------------------
+long getNumber(String &tok) { tok.trim(); return tok.toInt(); }
 
+void handleMove(long tgt) {
+  if (tgt < 0 || tgt > softMax) {
+    USB.printf("ERR: target %ld outside [0,%ld]\n", tgt, softMax);
+    return;
+  }
+  USB.printf("POS BEFORE: %ld\n", stepperA.currentPosition());
+  stepperA.moveTo(tgt);
+  while (stepperA.distanceToGo()) stepperA.run();
+  USB.printf("POS AFTER : %ld\n", stepperA.currentPosition());
+}
 
+void processCommand(String line) {
+  line.trim(); line.toLowerCase();
+  if (!line.length()) return;
+
+  int sp = line.indexOf(' ');
+  String cmd  = (sp == -1) ? line : line.substring(0, sp);
+  String argS = (sp == -1) ? ""   : line.substring(sp + 1);
+
+  if      (cmd == "home")      motorAHome();
+  else if (cmd == "mov")       handleMove(getNumber(argS));
+  else if (cmd == "setmax") {
+    long v = getNumber(argS);
+    if (v > 0) { softMax = v; USB.printf("softMax = %ld\n", softMax); }
+    else USB.println("ERR: value must be >0");
+  }
+  else if (cmd == "setspeed") {
+    long v = getNumber(argS);
+    if (v > 0) { stepperA.setMaxSpeed(v); USB.printf("maxSpeed = %ld\n", v); }
+    else USB.println("ERR: value must be >0");
+  }
+  else if (cmd == "setaccel") {
+    long v = getNumber(argS);
+    if (v > 0) { stepperA.setAcceleration(v); USB.printf("accel = %ld\n", v); }
+    else USB.println("ERR: value must be >0");
+  }
+  else if (cmd == "sett") {                 // --- NEW: set StallGuard threshold
+    long v = getNumber(argS);
+    if (v >= 0 && v <= 255) {
+      sgthrs = v;
+      driverA.SGTHRS((uint8_t)sgthrs);
+      USB.printf("SGTHRS = %u\n", sgthrs);
+    } else USB.println("ERR: value must be 0‑255");
+  }
+  else if (cmd == "t?") {                    // query threshold
+    uint8_t cur = driverA.SGTHRS();
+    USB.printf("SGTHRS = %u\n", cur);
+  }
+  else if (cmd == "pos?") {
+    USB.printf("POS = %ld\n", stepperA.currentPosition());
+  }
+  else {
+    USB.printf("ERR: unknown cmd '%s'\n", cmd.c_str());
+  }
+}
+
+//---------------------------------------------
+// Setup & main loop
+//---------------------------------------------
 void setup() {
-    
-    //Serial.begin(9600);
-    //while(!Serial);
-    //Serial.println("Start...");
-    
-    SERIAL_PORT.begin(115200, SERIAL_8N1, RX1, TX1);
+  pinMode(LED_BUILTIN, OUTPUT);
+  USB.begin(115200);
+  while (!USB);
 
-    pinMode(LED_BUILTIN, OUTPUT);
+  SERIAL_PORT.begin(115200, SERIAL_8N1, RX1, TX1);
+  attachInterrupt(digitalPinToInterrupt(STALL_PIN_X), stallInterruptA, RISING);
 
-    attachInterrupt(digitalPinToInterrupt(STALL_PIN_X), stallInterruptX, RISING);
-    // attachInterrupt(digitalPinToInterrupt(STALLB_PIN_X), stallInterruptB, RISING);
-    
-    driverA.begin();             // Initiate pins and registeries
-    driverA.rms_current(1880);    // Set stepperA current to 600mA. The command is the same as command TMC2130.setCurrent(600, 0.11, 0.5);
-    //driverA.en_pwm_mode(1);      // Enable extremely quiet stepping
-   
-    driverA.pwm_autoscale(1);
-    driverA.microsteps(16);
-    driverA.TCOOLTHRS(0xFFFFF); // 20bit max
-    driverA.SGTHRS(STALLA_VALUE);
+  driverA.begin();
+  driverA.rms_current(1880);
+  driverA.pwm_autoscale(true);
+  driverA.microsteps(16);
+  driverA.TCOOLTHRS(0xFFFFF);
+  driverA.SGTHRS(sgthrs);        // apply initial threshold
 
-    // driverB.begin();             // Initiate pins and registeries
-    // driverB.rms_current(700);    // Set stepperA current to 600mA. The command is the same as command TMC2130.setCurrent(600, 0.11, 0.5);
-    // //driverA.en_pwm_mode(1);      // Enable extremely quiet stepping
-    // driverB.pwm_autoscale(1);
-    // driverB.microsteps(16);
-    // driverB.TCOOLTHRS(0xFFFFF); // 20bit max
-    // driverB.SGTHRS(STALLB_VALUE);
+  stepperA.setEnablePin(EN_PIN);
+  stepperA.setPinsInverted(false, false, true);
+  stepperA.enableOutputs();
 
-    stepperA.setMaxSpeed(1.25*steps_per_round); // 100mm/s @ 80 steps/mm
-    stepperA.setAcceleration(10*steps_per_round); // 2000mm/s^2
-    stepperA.setEnablePin(EN_PIN);
-    stepperA.setPinsInverted(false, false, true);
-    stepperA.enableOutputs();
-
-    // stepperB.setMaxSpeed(1.25*steps_per_round); // 100mm/s @ 80 steps/mm
-    // stepperB.setAcceleration(10*steps_per_round); // 2000mm/s^2
-    // stepperB.setEnablePin(ENB_PIN);
-    // stepperB.setPinsInverted(false, false, true);
-    // stepperB.enableOutputs();
-
-    
-    motorAHome();
-    driverA.en_spreadCycle(true); 
-    // motorBHome();
-    
-    //stepperB.moveTo(2000);
-    
+  stepperA.setMaxSpeed(4000);
+  stepperA.setAcceleration(12000);
 }
 
 void loop() {
-
-  
-    /*
-    if(Serial.available()>0){
-      char readVal = Serial.read();
-      if (readVal == 'a'){
-      int steps = Serial.parseInt();
-      stepperA.moveTo(steps);
-      
-      } else if (readVal == 'A'){
-      motorAHome();
-      }
-
-      if (readVal == 'b'){
-      int steps = Serial.parseInt();
-      stepperB.moveTo(steps);
-      
-      } else if (readVal == 'B'){
-      motorBHome();
-      }
-    }
-    */
-
-  
+  if (USB.available()) {
+    String line = USB.readStringUntil('\n');
+    processCommand(line);
+  }
 
   stepperA.run();
-  // stepperB.run();
-    
 }
