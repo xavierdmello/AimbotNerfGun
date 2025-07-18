@@ -37,10 +37,17 @@
 #define LED_BUILTIN       2
 #define RX1               19
 #define TX1               21
+#define RX2               22   // UART2 RX
+#define TX2               25   // UART2 TX
 
-#define STEP_PIN          18   // Step
-#define DIR_PIN           5    // Direction
-#define STALL_PIN_X       17   // DIAG/STALL output from TMC2209
+#define STEP_PIN_A          18   // Step
+#define DIR_PIN_A           5    // Direction
+#define STALL_PIN_X_A       17   // DIAG/STALL output from TMC2209
+
+#define STEP_PIN_B        26   // Step for motor B
+#define DIR_PIN_B         27   // Direction for motor B
+#define STALL_PIN_X_B     28   // DIAG/STALL output from TMC2209
+
 
 #define SERIAL_PORT Serial1     // UART for TMC2209
 #define USB Serial              // USB‑CDC for user commands / debug
@@ -52,11 +59,11 @@ constexpr uint8_t DRIVER_ADDR    = 0b00;    // MS1=0, MS2=0
 // Globals
 //---------------------------------------------
 TMC2209Stepper driverA(&SERIAL_PORT, R_SENSE, DRIVER_ADDR);
-AccelStepper   stepperA(AccelStepper::DRIVER, STEP_PIN, DIR_PIN);
+AccelStepper   stepperA(AccelStepper::DRIVER, STEP_PIN_A, DIR_PIN);
 
 volatile bool stalled_A = false;
 long          softMax   = 1250;      // positive limit in steps
-uint8_t       sgthrs    = 7;          // StallGuard threshold (0‑255)
+uint8_t       sgthrs    = 5;          // StallGuard threshold (0‑255)
 long    prevSpeed;
 long    prevAccel;
 
