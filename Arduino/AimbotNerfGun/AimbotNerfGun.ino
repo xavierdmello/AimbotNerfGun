@@ -94,6 +94,7 @@ long    prevSpeedB;
 long    prevAccelB;
 bool laserOn = false;
 bool fireOn = false;
+bool prevButtonFire = false;
 
 //---------------------------------------------
 // ISR – stall flags
@@ -352,8 +353,17 @@ void loop() {
     processCommand(line);
   }
 
-  // Manual fire button logic
-  if (digitalRead(BUTTON_FIRE_PIN) == LOW) { // Button pressed (active low)
+  // Manual fire button logic with state change message
+  bool buttonFire = (digitalRead(BUTTON_FIRE_PIN) == LOW); // Button pressed (active low)
+  if (buttonFire != prevButtonFire) {
+    if (buttonFire) {
+      USB.println("Firing from button");
+    } else {
+      USB.println("Firing from command");
+    }
+    prevButtonFire = buttonFire;
+  }
+  if (buttonFire) {
     digitalWrite(FIRE_PIN, HIGH); // Force fire ON
   } else {
     digitalWrite(FIRE_PIN, fireOn ? HIGH : LOW); // Use toggle state
