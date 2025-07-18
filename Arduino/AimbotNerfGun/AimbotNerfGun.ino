@@ -46,7 +46,7 @@
 
 #define STEP_PIN_B        26   // Step for motor B
 #define DIR_PIN_B         27   // Direction for motor B
-#define STALL_PIN_X_B     28   // DIAG/STALL output from TMC2209
+#define STALL_PIN_X_B     4   // DIAG/STALL output from TMC2209
 
 
 #define SERIAL_PORT Serial1     // UART for TMC2209
