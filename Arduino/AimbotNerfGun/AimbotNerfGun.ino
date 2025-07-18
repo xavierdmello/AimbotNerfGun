@@ -90,6 +90,7 @@ long    prevSpeed;
 long    prevAccel;
 long    prevSpeedB;
 long    prevAccelB;
+bool laserOn = false;
 
 //---------------------------------------------
 // ISR – stall flags
@@ -282,6 +283,11 @@ void processCommand(String line) {
   else if (cmd == "posb?") {
     USB.printf("POSB = %ld\n", stepperB.currentPosition());
   }
+  else if (cmd == "laser") {
+    laserOn = !laserOn;
+    digitalWrite(LASER_PIN, laserOn ? HIGH : LOW);
+    USB.printf("Laser %s\n", laserOn ? "ON" : "OFF");
+  }
   else {
     USB.printf("ERR: unknown cmd '%s'\n", cmd.c_str());
   }
@@ -292,6 +298,8 @@ void processCommand(String line) {
 //---------------------------------------------
 void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(LASER_PIN, OUTPUT);
+  digitalWrite(LASER_PIN, LOW); // Laser off at startup
   USB.begin(115200);
   while (!USB);
 
