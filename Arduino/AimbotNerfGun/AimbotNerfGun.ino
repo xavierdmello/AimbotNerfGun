@@ -56,7 +56,7 @@ AccelStepper   stepperA(AccelStepper::DRIVER, STEP_PIN, DIR_PIN);
 
 volatile bool stalled_A = false;
 long          softMax   = 1250;      // positive limit in steps
-uint8_t       sgthrs    = 5;          // StallGuard threshold (0‑255)
+uint8_t       sgthrs    = 7;          // StallGuard threshold (0‑255)
 long    prevSpeed;
 long    prevAccel;
 
