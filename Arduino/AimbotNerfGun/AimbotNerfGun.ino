@@ -38,7 +38,6 @@
 #define RX1               19
 #define TX1               21
 
-#define EN_PIN            23   // Enable
 #define STEP_PIN          18   // Step
 #define DIR_PIN           5    // Direction
 #define STALL_PIN_X       17   // DIAG/STALL output from TMC2209
@@ -57,7 +56,7 @@ AccelStepper   stepperA(AccelStepper::DRIVER, STEP_PIN, DIR_PIN);
 
 volatile bool stalled_A = false;
 long          softMax   = 1250;      // positive limit in steps
-uint8_t       sgthrs    = 9;          // StallGuard threshold (0‑255)
+uint8_t       sgthrs    = 5;          // StallGuard threshold (0‑255)
 long    prevSpeed;
 long    prevAccel;
 
@@ -92,10 +91,10 @@ void motorAHome() {
   while (!stalled_A) stepperA.run();     // wait for stall
 
   // brick‑wall stop
-  stepperA.disableOutputs();             // cut pulses instantly
+  stepperA.stop();
   stepperA.setCurrentPosition(0);        // temporarily zero at switch
   driverA.en_spreadCycle(true);          // restore SpreadCycle
-  stepperA.enableOutputs();              // re‑energize motor
+
 
   // --- NEW: back off 50 steps ---
   stepperA.moveTo(50);                   // +50 steps away from switch
@@ -190,7 +189,7 @@ void setup() {
   driverA.TCOOLTHRS(0xFFFFF);
   driverA.SGTHRS(sgthrs);        // apply initial threshold
 
-  stepperA.setEnablePin(EN_PIN);
+
   stepperA.setPinsInverted(false, false, true);
   stepperA.enableOutputs();
 
