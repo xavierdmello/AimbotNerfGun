@@ -55,6 +55,7 @@
 #define RX2               22
 #define TX2               25
 #define LASER_PIN         15
+#define FIRE_PIN 34
 
 #define EN_PIN            23   // Enable
 #define STEP_PIN          18   // Step
@@ -91,6 +92,7 @@ long    prevAccel;
 long    prevSpeedB;
 long    prevAccelB;
 bool laserOn = false;
+bool fireOn = false;
 
 //---------------------------------------------
 // ISR – stall flags
@@ -288,6 +290,11 @@ void processCommand(String line) {
     digitalWrite(LASER_PIN, laserOn ? HIGH : LOW);
     USB.printf("Laser %s\n", laserOn ? "ON" : "OFF");
   }
+  else if (cmd == "fire") {
+    fireOn = !fireOn;
+    digitalWrite(FIRE_PIN, fireOn ? HIGH : LOW);
+    USB.printf("Fire %s\n", fireOn ? "ON" : "OFF");
+  }
   else {
     USB.printf("ERR: unknown cmd '%s'\n", cmd.c_str());
   }
@@ -300,6 +307,8 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(LASER_PIN, OUTPUT);
   digitalWrite(LASER_PIN, LOW); // Laser off at startup
+  pinMode(FIRE_PIN, OUTPUT);
+  digitalWrite(FIRE_PIN, LOW); // DC motors off at startup
   USB.begin(115200);
   while (!USB);
 
