@@ -331,7 +331,4 @@ void loop() {
     String line = USB.readStringUntil('\n');
     processCommand(line);
   }
-
-  stepperA.run();
-  stepperB.run();
 }
