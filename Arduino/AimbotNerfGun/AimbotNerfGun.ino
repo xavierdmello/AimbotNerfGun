@@ -56,6 +56,7 @@
 #define TX2               25
 #define LASER_PIN         15
 #define FIRE_PIN 34
+#define BUTTON_FIRE_PIN 35
 
 #define EN_PIN            23   // Enable
 #define STEP_PIN          18   // Step
@@ -309,6 +310,7 @@ void setup() {
   digitalWrite(LASER_PIN, LOW); // Laser off at startup
   pinMode(FIRE_PIN, OUTPUT);
   digitalWrite(FIRE_PIN, LOW); // DC motors off at startup
+  pinMode(BUTTON_FIRE_PIN, INPUT_PULLUP); // Manual fire button
   USB.begin(115200);
   while (!USB);
 
@@ -348,5 +350,12 @@ void loop() {
   if (USB.available()) {
     String line = USB.readStringUntil('\n');
     processCommand(line);
+  }
+
+  // Manual fire button logic
+  if (digitalRead(BUTTON_FIRE_PIN) == LOW) { // Button pressed (active low)
+    digitalWrite(FIRE_PIN, HIGH); // Force fire ON
+  } else {
+    digitalWrite(FIRE_PIN, fireOn ? HIGH : LOW); // Use toggle state
   }
 }
