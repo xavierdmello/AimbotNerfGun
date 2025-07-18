@@ -54,6 +54,7 @@
 #define TX1               21
 #define RX2               22
 #define TX2               25
+#define LASER_PIN         15
 
 #define EN_PIN            23   // Enable
 #define STEP_PIN          18   // Step
